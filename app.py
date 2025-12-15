@@ -13,6 +13,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# --- [MODIFIKASI 1] SETTING KURS DOLLAR ---
+# Kita asumsikan 1 USD = Rp 16.000 (Bisa diupdate sesuai kebutuhan)
+KURS_USD = 16000 
+
 # Custom CSS untuk mempercantik
 st.markdown("""
 <style>
@@ -32,9 +36,14 @@ st.markdown("""
 # Load Model
 @st.cache_resource
 def load_model():
+    # Pastikan file carbon_model.pkl ada di folder yang sama
     return joblib.load('carbon_model.pkl')
 
-model = load_model()
+try:
+    model = load_model()
+except:
+    st.error("File 'carbon_model.pkl' tidak ditemukan. Pastikan file model sudah di-upload.")
+    st.stop()
 
 # ==========================================
 # 2. SETUP DATA (MAPPING & SCALER)
@@ -91,7 +100,19 @@ with st.sidebar.expander("🚗 Transportasi"):
     flight = st.selectbox("Frekuensi Pesawat", list(mapping['Flight'].keys()))
 
 with st.sidebar.expander("🛒 Belanja & Sampah"):
-    grocery = st.number_input("Belanja Bulanan ($)", 0, 1000, 150)
+    # --- [MODIFIKASI 2] INPUT DALAM RUPIAH ---
+    # Range kita perbesar misal max 20 Juta. Step 50rb. Default 2 Juta.
+    grocery_idr = st.number_input(
+        "Belanja Bulanan (Rupiah)", 
+        min_value=0, 
+        max_value=20000000, 
+        value=2000000, 
+        step=50000,
+        format="%d"
+    )
+    # Tampilkan info konversi kecil di bawahnya agar user tau
+    st.caption(f"Setara dengan est. ${grocery_idr / KURS_USD:.2f} USD")
+    
     clothes = st.number_input("Beli Baju (item/bulan)", 0, 50, 5)
     bag_size = st.selectbox("Ukuran Kantong Sampah", list(mapping['Bag Size'].keys()))
     waste_weekly = st.slider("Jumlah Kantong Sampah/Minggu", 1, 10, 3)
@@ -110,7 +131,6 @@ with st.sidebar.expander("♻️ Daur Ulang & Masak"):
     oven = c4.checkbox("Oven")
     stove = c3.checkbox("Kompor")
     airfryer = c4.checkbox("Airfryer")
-    # PERBAIKAN: Pakai c3 atau c4 agar tetap di dalam kotak dan lurus
     grill = c3.checkbox("Grill")
 
 # ==========================================
@@ -123,6 +143,11 @@ st.divider()
 # Tombol Hitung Besar
 if st.sidebar.button("🚀 HITUNG JEJAK KARBON", type="primary"):
     
+    # --- [MODIFIKASI 3] KONVERSI RUPIAH KE DOLLAR ---
+    # Kita harus ubah ke dollar dulu sebelum masuk scaler
+    # karena model dilatih menggunakan data dollar.
+    grocery_usd = grocery_idr / KURS_USD
+
     # --- PROSES DATA ---
     input_dict = {
         'Body Type': int(mapping['Body Type'][body]),
@@ -133,7 +158,10 @@ if st.sidebar.button("🚀 HITUNG JEJAK KARBON", type="primary"):
         'Transport': int(mapping['Transport'][transport]),
         'Vehicle': int(mapping['Vehicle'][vehicle]),
         'Social': int(mapping['Social'][social]),
-        'Grocery': float(scale_value(grocery, 'Grocery')),
+        
+        # Masukkan nilai USD yang sudah dikonversi ke sini
+        'Grocery': float(scale_value(grocery_usd, 'Grocery')), 
+        
         'Flight': int(mapping['Flight'][flight]),
         'Vehicle Distance': float(scale_value(distance, 'Vehicle Distance')),
         'Bag Size': int(mapping['Bag Size'][bag_size]),
@@ -176,12 +204,11 @@ if st.sidebar.button("🚀 HITUNG JEJAK KARBON", type="primary"):
         with col_result2:
             st.subheader("Analisis Level Emisi")
             # Visualisasi Progress Bar (Normalisasi: Min ~300, Max ~8300)
-            # Kita anggap 8300 adalah 100%
             progress_val = (hasil - 300) / (8300 - 300)
-            progress_val = max(0.0, min(1.0, progress_val)) # Batasi 0-1
+            progress_val = max(0.0, min(1.0, progress_val)) 
             
             st.progress(progress_val)
-            st.caption(f"Posisi kamu dibandingkan rentang emisi dataset (Min: 300 - Max: 8300)")
+            st.caption(f"Posisi kamu dibandingkan rentang emisi dataset global")
 
         st.divider()
         
@@ -192,13 +219,11 @@ if st.sidebar.button("🚀 HITUNG JEJAK KARBON", type="primary"):
         if transport == 'private':
             suggestions.append("🚗 **Transportasi:** Cobalah menggunakan transportasi umum atau bersepeda untuk jarak dekat.")
         if flight in ['frequently', 'very frequently']:
-            suggestions.append("✈️ **Penerbangan:** Frekuensi terbangmu tinggi. Pertimbangkan *carbon offset* atau kurangi perjalanan udara.")
+            suggestions.append("✈️ **Penerbangan:** Frekuensi terbangmu tinggi. Pertimbangkan carbon offset.")
         if diet == 'omnivore':
             suggestions.append("🥩 **Makanan:** Mengurangi konsumsi daging merah 1 hari seminggu bisa berdampak besar.")
-        if heating == 'coal' or heating == 'wood':
-            suggestions.append("🔥 **Pemanas:** Sumber pemanasmu menghasilkan emisi tinggi. Coba beralih ke listrik atau gas alam jika memungkinkan.")
-        if not (plastic and paper and metal):
-             suggestions.append("♻️ **Daur Ulang:** Tingkatkan kebiasaan mendaur ulang sampah rumah tangga.")
+        if grocery_usd > 300: # Cek pakai USD
+             suggestions.append("🛒 **Belanja:** Pengeluaran belanja cukup tinggi, pastikan membeli produk lokal/sustainable.")
 
         if suggestions:
             for s in suggestions:
@@ -207,13 +232,11 @@ if st.sidebar.button("🚀 HITUNG JEJAK KARBON", type="primary"):
             st.success("Gaya hidupmu sudah sangat baik! Pertahankan.")
 
     except Exception as e:
-        st.error(f"Terjadi kesalahan: {e}")
+        st.error(f"Terjadi kesalahan pada model: {e}")
 
 else:
-    # Tampilan awal sebelum tombol ditekan
+    # Tampilan awal
     st.info("👈 Silakan isi data di menu sebelah kiri, lalu klik tombol **HITUNG**.")
-    
-    # Menampilkan Gambar/Ilustrasi (Opsional - pakai emoji besar saja biar ringan)
     st.markdown("""
     <div style="text-align: center; font-size: 100px;">
         🌍
